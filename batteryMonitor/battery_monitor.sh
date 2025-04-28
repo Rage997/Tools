@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Battery monitoring script for Linux laptops
+# Battery monitoring script for Linux laptops with (NVIDIA) GPU power monitoring
 # Monitors power consumption while charging from external source
 # Exits when charging stops (battery runs out)
 
@@ -14,7 +14,8 @@ echo "Press Ctrl+C to stop manually"
 
 # Initialize variables
 start_time=$(date +%s)
-previous_energy=0
+previous_time=$start_time
+total_energy_wh=0
 is_charging=false
 
 # Function to check if the laptop is currently charging
@@ -31,7 +32,7 @@ check_charging() {
 }
 
 # Function to get current power consumption in watts
-get_power_consumption() {
+get_system_power_consumption() {
   local power=$(cat /sys/class/power_supply/BAT0/power_now 2>/dev/null || 
                 cat /sys/class/power_supply/*/power_now 2>/dev/null | head -n1)
   
@@ -50,6 +51,20 @@ get_power_consumption() {
   fi
   
   echo "$power"
+}
+
+# Function to get GPU power consumption in watts. It works only with NVIDIA GPUs
+get_gpu_power_consumption() {
+  if command -v nvidia-smi &> /dev/null; then
+    local gpu_power=$(nvidia-smi --query-gpu=power.draw --format=csv,noheader,nounits 2>/dev/null)
+    if [ -n "$gpu_power" ]; then
+      echo "$gpu_power"
+    else
+      echo "0"
+    fi
+  else
+    echo "0"
+  fi
 }
 
 # Function to get battery percentage
@@ -77,12 +92,12 @@ done
 echo "Charging detected! Monitoring started at $(date)"
 is_charging=true
 start_time=$(date +%s)
+previous_time=$start_time
 
 # Write headers to log file
-echo "Timestamp,Elapsed_Time,Power_Watts,Battery_Percentage" > "$LOG_FILE"
+echo "Timestamp,Elapsed_Time,System_Power_W,GPU_Power_W,Total_Power_W,Energy_Wh,Battery_Percentage" > "$LOG_FILE"
 
 # Main monitoring loop
-total_energy=0
 sample_count=0
 max_power=0
 min_power=999999
@@ -93,29 +108,37 @@ while $is_charging; do
   formatted_time=$(format_duration $elapsed_seconds)
   
   # Get power consumption and battery percentage
-  power=$(get_power_consumption)
+  system_power=$(get_system_power_consumption)
+  gpu_power=$(get_gpu_power_consumption)
+  total_power=$(echo "scale=2; $system_power + $gpu_power" | bc)
   battery_percent=$(get_battery_percentage)
   
   # Skip invalid readings
-  if [ -n "$power" ] && [ "$power" != "0" ]; then
+  if [ -n "$total_power" ] && [ "$total_power" != "0" ]; then
     # Update statistics
+    time_diff=$((current_time - previous_time))
+    energy_this_interval=$(echo "scale=4; $total_power * $time_diff / 3600" | bc)
+    total_energy_wh=$(echo "scale=2; $total_energy_wh + $energy_this_interval" | bc)
+
     sample_count=$((sample_count + 1))
-    total_energy=$(echo "scale=2; $total_energy + $power" | bc)
-    
+
     # Update min/max power
-    if (( $(echo "$power > $max_power" | bc -l) )); then
-      max_power=$power
+    if (( $(echo "$total_power > $max_power" | bc -l) )); then
+      max_power=$total_power
     fi
     
-    if (( $(echo "$power < $min_power" | bc -l) )); then
-      min_power=$power
+    if (( $(echo "$total_power < $min_power" | bc -l) )); then
+      min_power=$total_power
     fi
     
     # Log data
-    echo "$(date +"%Y-%m-%d %H:%M:%S"),$formatted_time,$power,$battery_percent" >> "$LOG_FILE"
+    echo "$(date +"%Y-%m-%d %H:%M:%S"),$formatted_time,$system_power,$gpu_power,$total_power,$total_energy_wh,$battery_percent" >> "$LOG_FILE"
     
     # Display current stats
-    echo -ne "Runtime: $formatted_time | Current Power: ${power}W | Battery: ${battery_percent}%\r"
+    echo -ne "Runtime: $formatted_time | System: ${system_power}W | GPU: ${gpu_power}W | Total: ${total_power}W | Energy: ${total_energy_wh}Wh | Battery: ${battery_percent}%\r"
+    
+    # Update previous time for next interval
+    previous_time=$current_time
   fi
   
   # Check if still charging
@@ -131,13 +154,11 @@ end_time=$(date +%s)
 total_runtime=$((end_time - start_time))
 formatted_total_time=$(format_duration $total_runtime)
 
-# Calculate statistics
-if [ $sample_count -gt 0 ]; then
-  avg_power=$(echo "scale=2; $total_energy / $sample_count" | bc)
-  total_energy_wh=$(echo "scale=2; $avg_power * $total_runtime / 3600" | bc)
+# Calculate average power
+if [ $total_runtime -gt 0 ]; then
+  avg_power=$(echo "scale=2; $total_energy_wh * 3600 / $total_runtime" | bc)
 else
   avg_power="0"
-  total_energy_wh="0"
 fi
 
 # Generate summary
