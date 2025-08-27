@@ -1,7 +1,3 @@
-Here’s a concise `README.md` written in your style:
-
----
-
 # nasctl
 
 A small command-line tool to manage mounting a Synology NAS on Linux.
