@@ -1,0 +1,63 @@
+#!/bin/bash
+#
+# ===================== NAS AUTO-MOUNT SCRIPT =====================
+# This script mounts multiple Synology NAS shares on a Linux client.
+# Setup Reference:
+# 1. Install CIFS utilities:
+#      sudo apt update && sudo apt install -y cifs-utils
+#
+# 2. Create a credentials file at /etc/smb-credentials:
+#      username=YOUR_USERNAME
+#      password=YOUR_PASSWORD
+#    and secure it:
+#      sudo chmod 600 /etc/smb-credentials
+#
+# 3. Example NAS IP configuration:
+#      IP: 192.168.1.246
+#      SMB Shares: Personal_Pictures, Movies
+#
+# 4. fstab entries (optional for auto-mount at boot):
+#    //192.168.1.246/Personal_Pictures  /mnt/synology/Pictures  cifs  credentials=/etc/smb-credentials,uid=1000,gid=1000,iocharset=utf8,nofail,_netdev 0 0
+#    //192.168.1.246/Movies       /mnt/synology/Multimediale cifs credentials=/etc/smb-credentials,uid=1000,gid=1000,iocharset=utf8,nofail,_netdev 0 0
+# ==================================================================
+
+# Define mount points and corresponding shares
+declare -A MOUNTS=(
+  ["/mnt/synology/Pictures"]="Personal_Pictures"
+  ["/mnt/synology/Multimediale"]="Multimediale"
+  ["/mnt/synology/Niccolo"]="Niccolo"
+)
+
+NAS_IP="192.168.1.246"
+CREDENTIALS="/etc/smb-credentials"
+
+# Create mount points if they don't exist
+for MOUNT in "${!MOUNTS[@]}"; do
+    if [ ! -d "$MOUNT" ]; then
+        echo "Creating mount point $MOUNT..."
+        sudo mkdir -p "$MOUNT"
+    fi
+done
+
+# Mount each share
+for MOUNT in "${!MOUNTS[@]}"; do
+    SHARE_NAME=${MOUNTS[$MOUNT]}
+    
+    # Check if already mounted
+    if mountpoint -q "$MOUNT"; then
+        echo "$MOUNT is already mounted."
+        continue
+    fi
+
+    # Attempt to mount
+    echo "Mounting //$NAS_IP/$SHARE_NAME -> $MOUNT"
+    sudo mount -t cifs -o credentials="$CREDENTIALS",uid=1000,gid=1000,iocharset=utf8,nofail,_netdev "//${NAS_IP}/${SHARE_NAME}" "$MOUNT"
+
+    if mountpoint -q "$MOUNT"; then
+        echo "Successfully mounted $MOUNT"
+    else
+        echo "Failed to mount $MOUNT (maybe the share is unavailable or encrypted and locked)"
+    fi
+done
+
+echo "NAS mount script finished."
