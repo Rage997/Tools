@@ -1,0 +1,165 @@
+#!/bin/bash
+
+# video2square - Convert videos to square (1:1) with blurred padding
+# Perfect for LinkedIn, Instagram, and social media posts
+
+set -e
+
+VERSION="1.0.0"
+
+show_help() {
+    cat << EOF
+video2square v${VERSION}
+
+Convert videos to square (1:1) aspect ratio with blurred padding.
+Perfect for LinkedIn, Instagram, and other social media platforms.
+
+USAGE:
+    video2square [OPTIONS] <input_file> [output_file]
+
+ARGUMENTS:
+    <input_file>     Input video file
+    [output_file]    Output file (default: adds '-square' suffix)
+
+OPTIONS:
+    -s, --size SIZE      Output size in pixels (default: 1080)
+    -q, --quality CRF    Video quality, lower is better (default: 23, range: 18-28)
+    -b, --blur AMOUNT    Blur intensity (default: 20)
+    -p, --preset PRESET  Encoding speed preset (default: medium)
+                         Options: ultrafast, superfast, veryfast, faster, fast,
+                                  medium, slow, slower, veryslow
+    -h, --help          Show this help message
+    -v, --version       Show version
+
+EXAMPLES:
+    # Basic usage
+    video2square input.mov
+
+    # Specify output file
+    video2square input.mov output.mp4
+
+    # Higher quality (file will be larger)
+    video2square -q 18 input.mov
+
+    # Larger output size
+    video2square -s 1920 input.mov
+
+    # More blur
+    video2square -b 30 input.mov
+
+EOF
+}
+
+# Default values
+SIZE=1080
+CRF=23
+BLUR=20
+PRESET="medium"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -v|--version)
+            echo "video2square v${VERSION}"
+            exit 0
+            ;;
+        -s|--size)
+            SIZE="$2"
+            shift 2
+            ;;
+        -q|--quality)
+            CRF="$2"
+            shift 2
+            ;;
+        -b|--blur)
+            BLUR="$2"
+            shift 2
+            ;;
+        -p|--preset)
+            PRESET="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+        *)
+            if [ -z "$INPUT" ]; then
+                INPUT="$1"
+            elif [ -z "$OUTPUT" ]; then
+                OUTPUT="$1"
+            else
+                echo "Too many arguments"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Check if input file is provided
+if [ -z "$INPUT" ]; then
+    echo "Error: No input file specified"
+    echo "Use --help for usage information"
+    exit 1
+fi
+
+# Check if input file exists
+if [ ! -f "$INPUT" ]; then
+    echo "Error: Input file '$INPUT' not found"
+    exit 1
+fi
+
+# Check if ffmpeg is installed
+if ! command -v ffmpeg &> /dev/null; then
+    echo "Error: ffmpeg is not installed"
+    echo "Install it with: brew install ffmpeg"
+    exit 1
+fi
+
+# Generate output filename if not provided
+if [ -z "$OUTPUT" ]; then
+    BASENAME="${INPUT%.*}"
+    EXTENSION="${INPUT##*.}"
+    OUTPUT="${BASENAME}-square.${EXTENSION}"
+fi
+
+echo "Converting video to square format..."
+echo "Input:   $INPUT"
+echo "Output:  $OUTPUT"
+echo "Size:    ${SIZE}x${SIZE}"
+echo "Quality: CRF ${CRF}"
+echo "Blur:    ${BLUR}"
+echo "Preset:  ${PRESET}"
+echo ""
+
+# FFmpeg command
+ffmpeg -i "$INPUT" \
+  -filter_complex "\
+    [0:v]scale=${SIZE}:${SIZE}:force_original_aspect_ratio=decrease,boxblur=${BLUR}:5,scale=${SIZE}:${SIZE},setsar=1[bg]; \
+    [0:v]scale=${SIZE}:${SIZE}:force_original_aspect_ratio=decrease,setsar=1[fg]; \
+    [bg][fg]overlay=(W-w)/2:(H-h)/2" \
+  -c:v libx264 -crf "$CRF" -preset "$PRESET" -profile:v high -pix_fmt yuv420p \
+  -c:a aac -b:a 128k -movflags +faststart \
+  "$OUTPUT" -y
+
+if [ $? -eq 0 ]; then
+    echo ""
+    echo "Conversion complete!"
+    echo "Output saved to: $OUTPUT"
+    
+    # Show file sizes
+    INPUT_SIZE=$(du -h "$INPUT" | cut -f1)
+    OUTPUT_SIZE=$(du -h "$OUTPUT" | cut -f1)
+    echo ""
+    echo "File size: $INPUT_SIZE -> $OUTPUT_SIZE"
+else
+    echo ""
+    echo "Error: Conversion failed"
+    exit 1
+fi
